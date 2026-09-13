@@ -1,0 +1,3 @@
+.detalle { display: flex; flex-direction: column; gap: .25rem; margin-top: 1rem; }
+.detalle h2 { margin: 0; overflow-wrap: anywhere; }
+.detalle p { margin: 0; }
