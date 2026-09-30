@@ -1,40 +1,44 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
-import { AlmacenamientoService } from '../compartido/almacenamiento';
+import { catchError, concatMap, finalize, from, of, retry, timer } from 'rxjs';
 import type { Actividad, EstadoActividad, Prioridad } from '../modelos/actividad';
 import { LIMITES } from '../modelos/actividad';
-import { esColeccionActividades } from '../modelos/actividad';
-
-const CLAVE = 'panel.actividades.v1';
-
-const INICIALES: readonly Actividad[] = [
-  { id: 1, titulo: 'Preparar estructura HTML', estado: 'completada', prioridad: 'alta', creadaEn: '2026-08-10', destacada: false, descripcion: '' },
-  { id: 2, titulo: 'Revisar contraste', estado: 'en_progreso', prioridad: 'media', creadaEn: '2026-08-12', destacada: true, descripcion: '' },
-  { id: 3, titulo: 'Practicar TypeScript', estado: 'pendiente', prioridad: 'alta', creadaEn: '2026-08-14', destacada: false, descripcion: '' },
-  { id: 4, titulo: 'Comprobar vista estrecha', estado: 'pendiente', prioridad: 'baja', creadaEn: '2026-08-16', destacada: false, descripcion: '' },
-  { id: 5, titulo: 'Ejecutar el build', estado: 'pendiente', prioridad: 'media', creadaEn: '2026-08-18', destacada: false, descripcion: '' },
-];
+import { ActividadesApi } from '../api/actividades-api';
+import { mensajeDe } from '../api/mensajes';
 
 @Injectable({ providedIn: 'root' })
 export class ActividadesService {
-  private readonly almacen = inject(AlmacenamientoService);
-  private readonly lista = signal<Actividad[]>(INICIALES.map((actividad) => ({ ...actividad })));
+  private readonly api = inject(ActividadesApi);
+  private readonly lista = signal<Actividad[]>([]);
 
   readonly actividades = this.lista.asReadonly();
-  readonly aviso = signal('');
-  readonly sinGuardar = signal(false);
+  readonly cargando = signal(false);
+  readonly error = signal('');
+  readonly errorCarga = signal('');
   readonly total = computed(() => this.lista().length);
-  readonly pendientes = computed(() => this.lista().filter((a) => a.estado === 'pendiente').length);
-  readonly enProgreso = computed(() => this.lista().filter((a) => a.estado === 'en_progreso').length);
-  readonly completadas = computed(() => this.lista().filter((a) => a.estado === 'completada').length);
+  readonly pendientes = computed(() => this.lista().filter((actividad) => actividad.estado === 'pendiente').length);
+  readonly enProgreso = computed(() => this.lista().filter((actividad) => actividad.estado === 'en_progreso').length);
+  readonly completadas = computed(() => this.lista().filter((actividad) => actividad.estado === 'completada').length);
   readonly porcentaje = computed(() =>
     this.total() === 0 ? 0 : Math.round((this.completadas() / this.total()) * 100),
   );
 
   constructor() {
     this.cargar();
-    window.addEventListener('storage', (evento) => {
-      if (evento.key === CLAVE) this.cargar();
-    });
+  }
+
+  cargar(): void {
+    this.cargando.set(true);
+    this.error.set('');
+    this.errorCarga.set('');
+
+    this.api.listar().pipe(
+      retry({ count: 2, delay: (_, intento) => timer(intento * 300) }),
+      catchError((error: unknown) => {
+        this.errorCarga.set(mensajeDe(error));
+        return of<Actividad[]>([]);
+      }),
+      finalize(() => this.cargando.set(false)),
+    ).subscribe((actividades) => this.lista.set(actividades));
   }
 
   buscarPorId(id: number): Actividad | undefined {
@@ -45,7 +49,7 @@ export class ActividadesService {
     const limpio = titulo.trim();
     if (!this.tituloAceptable(limpio, null)) return null;
 
-    const nueva: Actividad = {
+    const provisional: Actividad = {
       id: this.siguienteId(),
       titulo: limpio,
       descripcion: descripcion.trim(),
@@ -55,27 +59,79 @@ export class ActividadesService {
       destacada: false,
     };
 
-    this.aplicar((actual) => [...actual, nueva]);
-    return nueva;
+    this.error.set('');
+    this.lista.update((actual) => [...actual, provisional]);
+    this.api.crear({ titulo: limpio, descripcion: descripcion.trim(), prioridad, completada: false }).pipe(
+      catchError((error: unknown) => this.deshacer(provisional.id, error)),
+    ).subscribe((guardada) => {
+      if (guardada) {
+        this.reemplazar(provisional.id, guardada);
+      } else if (!this.error()) {
+        this.error.set('El servidor devolvió una actividad con un formato no válido.');
+        this.quitarLocal(provisional.id);
+      }
+    });
+
+    return provisional;
   }
 
   actualizar(id: number, titulo: string, descripcion: string, prioridad: Prioridad): boolean {
     const limpio = titulo.trim();
-    if (!this.buscarPorId(id) || !this.tituloAceptable(limpio, id)) return false;
+    const anterior = this.buscarPorId(id);
+    if (!anterior || !this.tituloAceptable(limpio, id)) return false;
 
-    this.aplicar((actual) =>
-      actual.map((actividad) =>
-        actividad.id === id
-          ? { ...actividad, titulo: limpio, descripcion: descripcion.trim(), prioridad }
-          : actividad,
-      ),
-    );
+    const cambios = { titulo: limpio, descripcion: descripcion.trim(), prioridad };
+    this.error.set('');
+    this.aplicarLocal(id, cambios);
+    this.enviar(id, anterior);
     return true;
+  }
+
+  alternarDestacada(id: number): void {
+    const actividad = this.buscarPorId(id);
+    if (actividad) this.aplicarLocal(id, { destacada: !actividad.destacada });
+  }
+
+  avanzarEstado(id: number): void {
+    const actividad = this.buscarPorId(id);
+    if (!actividad) return;
+    this.aplicarLocal(id, { estado: this.siguienteEstado(actividad.estado) });
+    this.enviar(id, actividad);
+  }
+
+  eliminar(id: number): void {
+    const anterior = this.buscarPorId(id);
+    if (!anterior) return;
+    const indice = this.lista().findIndex((actividad) => actividad.id === id);
+
+    this.error.set('');
+    this.lista.update((actual) => actual.filter((actividad) => actividad.id !== id));
+    this.api.eliminar(id).pipe(
+      catchError((error: unknown) => {
+        this.error.set(mensajeDe(error));
+        this.restaurar(anterior, indice);
+        return of(undefined);
+      }),
+    ).subscribe();
+  }
+
+  vaciar(): void {
+    const anteriores = [...this.lista()];
+    this.error.set('');
+    this.lista.set([]);
+    from(anteriores).pipe(
+      concatMap((actividad) => this.api.eliminar(actividad.id).pipe(
+        catchError((error: unknown) => {
+          this.error.set(mensajeDe(error));
+          this.lista.update((actual) => [...actual, actividad].sort((a, b) => a.id - b.id));
+          return of(undefined);
+        }),
+      )),
+    ).subscribe();
   }
 
   private tituloAceptable(limpio: string, salvo: number | null): boolean {
     if (limpio.length < LIMITES.tituloMin || limpio.length > LIMITES.tituloMax) return false;
-
     const normal = limpio.toLocaleLowerCase('es');
     return !this.lista().some(
       (actividad) => actividad.id !== salvo && actividad.titulo.toLocaleLowerCase('es') === normal,
@@ -86,41 +142,59 @@ export class ActividadesService {
     return this.lista().reduce((mayor, actividad) => Math.max(mayor, actividad.id), 0) + 1;
   }
 
-  alternarDestacada(id: number): void {
-    this.aplicar((actual) => actual.map((a) => (a.id === id ? { ...a, destacada: !a.destacada } : a)));
+  private enviar(id: number, anterior: Actividad): void {
+    const actividad = this.buscarPorId(id);
+    if (!actividad) return;
+    this.error.set('');
+
+    this.api.actualizar(id, {
+      titulo: actividad.titulo,
+      descripcion: actividad.descripcion,
+      prioridad: actividad.prioridad,
+      completada: actividad.estado === 'completada',
+      creadaEn: actividad.creadaEn,
+    }).pipe(
+      catchError((error: unknown) => {
+        this.error.set(mensajeDe(error));
+        this.reemplazar(id, anterior);
+        return of(null);
+      }),
+    ).subscribe((guardada) => {
+      if (guardada) {
+        this.reemplazar(id, { ...guardada, destacada: actividad.destacada });
+      } else if (!this.error()) {
+        this.error.set('El servidor devolvió una actividad con un formato no válido.');
+        this.reemplazar(id, anterior);
+      }
+    });
   }
 
-  avanzarEstado(id: number): void {
-    this.aplicar((actual) => actual.map((a) => (a.id === id ? { ...a, estado: this.siguienteEstado(a.estado) } : a)));
+  private deshacer(id: number, error: unknown) {
+    this.error.set(mensajeDe(error));
+    this.quitarLocal(id);
+    return of(null);
   }
 
-  eliminar(id: number): void {
-    this.aplicar((actual) => actual.filter((a) => a.id !== id));
+  private aplicarLocal(id: number, cambios: Partial<Actividad>): void {
+    this.lista.update((actual) => actual.map((actividad) =>
+      actividad.id === id ? { ...actividad, ...cambios } : actividad,
+    ));
   }
 
-  vaciar(): void {
-    this.aplicar(() => []);
+  private reemplazar(id: number, actividad: Actividad): void {
+    this.lista.update((actual) => actual.map((item) => item.id === id ? actividad : item));
   }
 
-  private aplicar(cambio: (actual: Actividad[]) => Actividad[]): void {
-    this.lista.update(cambio);
-    this.guardar();
+  private quitarLocal(id: number): void {
+    this.lista.update((actual) => actual.filter((actividad) => actividad.id !== id));
   }
 
-  private guardar(): void {
-    this.sinGuardar.set(!this.almacen.guardar(CLAVE, this.lista()));
-  }
-
-  private cargar(): void {
-    if (!this.almacen.existe(CLAVE)) return;
-
-    const valor = this.almacen.leer(CLAVE);
-    if (!esColeccionActividades(valor)) {
-      this.aviso.set('Lo que habia guardado no se pudo leer. Empiezas con las actividades de ejemplo.');
-      return;
-    }
-
-    this.lista.set(valor.map((actividad) => ({ ...actividad })));
+  private restaurar(actividad: Actividad, indice: number): void {
+    this.lista.update((actual) => {
+      const siguiente = [...actual];
+      siguiente.splice(Math.min(indice, siguiente.length), 0, actividad);
+      return siguiente;
+    });
   }
 
   private siguienteEstado(estado: EstadoActividad): EstadoActividad {

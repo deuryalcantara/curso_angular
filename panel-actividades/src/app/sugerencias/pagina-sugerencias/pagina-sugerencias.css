@@ -1,0 +1,7 @@
+.sugerencias { display: flex; flex-direction: column; gap: .75rem; align-items: flex-start; }
+.lista-sugerencias { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; width: 100%; }
+.lista-sugerencias li { border: 1px solid #d4d4d4; border-radius: .5rem; padding: .75rem; min-width: 0; }
+.lista-sugerencias h3 { margin: 0 0 .25rem; font-size: 1rem; overflow-wrap: anywhere; }
+.lista-sugerencias p { margin: 0; overflow-wrap: anywhere; }
+.vacio { border: 1px dashed #949494; border-radius: .5rem; padding: 1rem; }
+.cargando, .error { margin: 0; }

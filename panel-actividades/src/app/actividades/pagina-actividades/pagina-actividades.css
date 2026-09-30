@@ -1,4 +1,4 @@
 .pagina { display: flex; flex-direction: column; gap: 1.5rem; }
 .pagina h2 { margin: 0; }
 .seleccion { border-left: 4px solid #545454; padding-left: .75rem; }
-.aviso { margin: 0; border: 1px solid #949494; border-radius: .5rem; padding: .5rem .75rem; }
+.cargando, .error { margin: 0; border: 1px solid #949494; border-radius: .5rem; padding: .5rem .75rem; }

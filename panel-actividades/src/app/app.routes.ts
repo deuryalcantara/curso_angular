@@ -35,5 +35,11 @@ export const routes: Routes = [
 		loadComponent: () =>
 			import('./estadisticas/pagina-estadisticas/pagina-estadisticas').then((m) => m.PaginaEstadisticas),
 	},
+	{
+		path: 'sugerencias',
+		title: 'Sugerencias',
+		loadComponent: () =>
+			import('./sugerencias/pagina-sugerencias/pagina-sugerencias').then((m) => m.PaginaSugerencias),
+	},
 	{ path: '**', component: PaginaNoEncontrada, title: 'Página no encontrada' },
 ];

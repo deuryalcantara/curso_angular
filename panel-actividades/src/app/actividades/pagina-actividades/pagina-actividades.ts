@@ -1,7 +1,13 @@
 import { Component, computed, inject, input, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { toObservable } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import { RouterLink } from '@angular/router';
+import { catchError, debounceTime, of, switchMap } from 'rxjs';
 import type { EstadoActividad, FiltroEstado, FiltroPrioridad, Prioridad } from '../../modelos/actividad';
+import type { Actividad } from '../../modelos/actividad';
+import { ActividadesApi } from '../../api/actividades-api';
+import { mensajeDe } from '../../api/mensajes';
 import { ActividadesService } from '../actividades';
 import { FiltrosActividades } from '../filtros-actividades/filtros-actividades';
 import { ListaActividades } from '../lista-actividades/lista-actividades';
@@ -16,18 +22,22 @@ import { PanelSeccion } from '../../compartido/panel-seccion/panel-seccion';
 })
 export class PaginaActividades {
   private readonly servicio = inject(ActividadesService);
+  private readonly api = inject(ActividadesApi);
   private readonly router = inject(Router);
   private readonly ruta = inject(ActivatedRoute);
   private readonly orden: Record<Prioridad, number> = { alta: 0, media: 1, baja: 2 };
 
   protected readonly actividades = this.servicio.actividades;
-  protected readonly aviso = this.servicio.aviso;
-  protected readonly sinGuardar = this.servicio.sinGuardar;
+  protected readonly cargando = this.servicio.cargando;
+  protected readonly errorCarga = this.servicio.errorCarga;
+  protected readonly errorOperacion = this.servicio.error;
   protected readonly total = this.servicio.total;
   protected readonly pendientes = this.servicio.pendientes;
   protected readonly enProgreso = this.servicio.enProgreso;
   protected readonly completadas = this.servicio.completadas;
   protected readonly porcentaje = this.servicio.porcentaje;
+  protected readonly resultados = signal<Actividad[] | null>(null);
+  protected readonly errorBusqueda = signal('');
 
   readonly buscar = input<string | undefined>('');
   readonly estado = input<FiltroEstado | undefined>('todas');
@@ -43,7 +53,7 @@ export class PaginaActividades {
     const estado = this.filtroEstado();
     const prioridad = this.filtroPrioridad();
 
-    return this.actividades()
+    return (this.resultados() ?? this.actividades())
       .filter((actividad) => termino === '' || actividad.titulo.toLocaleLowerCase('es').includes(termino))
       .filter((actividad) => estado === 'todas' || actividad.estado === estado)
       .filter((actividad) => prioridad === 'todas' || actividad.prioridad === prioridad)
@@ -100,6 +110,29 @@ export class PaginaActividades {
     this.servicio.vaciar();
     this.limpiarFiltros();
     this.seleccionadaId.set(null);
+  }
+
+  protected recargar(): void {
+    this.servicio.cargar();
+  }
+
+  constructor() {
+    toObservable(this.termino).pipe(
+      debounceTime(300),
+      switchMap((termino) => {
+        if (termino.trim() === '') {
+          this.errorBusqueda.set('');
+          return of(null);
+        }
+        return this.api.buscar(termino).pipe(
+          catchError((error: unknown) => {
+            this.errorBusqueda.set(mensajeDe(error));
+            return of<Actividad[]>([]);
+          }),
+        );
+      }),
+      takeUntilDestroyed(),
+    ).subscribe((resultados) => this.resultados.set(resultados));
   }
 
   private actualizar(cambios: Record<string, string | null>): void {

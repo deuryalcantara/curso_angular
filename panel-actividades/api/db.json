@@ -1,0 +1,28 @@
+{
+  "actividades": [
+    {
+      "id": 1,
+      "task_title": "Revisar el informe",
+      "description": "Comprobar las cifras y la estructura del documento.",
+      "priority_level": 3,
+      "is_done": false,
+      "created_at": "2026-08-10T09:00:00.000Z"
+    },
+    {
+      "id": 2,
+      "task_title": "Preparar la reunión",
+      "description": "Reunir los puntos para la revisión semanal.",
+      "priority_level": 2,
+      "is_done": false,
+      "created_at": "2026-08-12T10:30:00.000Z"
+    },
+    {
+      "id": 3,
+      "task_title": "Llamar al proveedor",
+      "description": null,
+      "priority_level": 1,
+      "is_done": true,
+      "created_at": "2026-08-14T14:15:00.000Z"
+    }
+  ]
+}
