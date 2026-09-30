@@ -1,3 +1,5 @@
 .detalle { display: flex; flex-direction: column; gap: .25rem; margin-top: 1rem; }
 .detalle h2 { margin: 0; overflow-wrap: anywhere; }
 .detalle p { margin: 0; }
+.descripcion { overflow-wrap: anywhere; }
+.acciones { display: flex; gap: .75rem; align-items: center; margin-top: .5rem; }

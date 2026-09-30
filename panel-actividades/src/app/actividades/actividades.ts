@@ -1,16 +1,17 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { AlmacenamientoService } from '../compartido/almacenamiento';
-import type { Actividad, EstadoActividad } from '../modelos/actividad';
+import type { Actividad, EstadoActividad, Prioridad } from '../modelos/actividad';
+import { LIMITES } from '../modelos/actividad';
 import { esColeccionActividades } from '../modelos/actividad';
 
 const CLAVE = 'panel.actividades.v1';
 
 const INICIALES: readonly Actividad[] = [
-  { id: 1, titulo: 'Preparar estructura HTML', estado: 'completada', prioridad: 'alta', creadaEn: '2026-08-10', destacada: false },
-  { id: 2, titulo: 'Revisar contraste', estado: 'en_progreso', prioridad: 'media', creadaEn: '2026-08-12', destacada: true },
-  { id: 3, titulo: 'Practicar TypeScript', estado: 'pendiente', prioridad: 'alta', creadaEn: '2026-08-14', destacada: false },
-  { id: 4, titulo: 'Comprobar vista estrecha', estado: 'pendiente', prioridad: 'baja', creadaEn: '2026-08-16', destacada: false },
-  { id: 5, titulo: 'Ejecutar el build', estado: 'pendiente', prioridad: 'media', creadaEn: '2026-08-18', destacada: false },
+  { id: 1, titulo: 'Preparar estructura HTML', estado: 'completada', prioridad: 'alta', creadaEn: '2026-08-10', destacada: false, descripcion: '' },
+  { id: 2, titulo: 'Revisar contraste', estado: 'en_progreso', prioridad: 'media', creadaEn: '2026-08-12', destacada: true, descripcion: '' },
+  { id: 3, titulo: 'Practicar TypeScript', estado: 'pendiente', prioridad: 'alta', creadaEn: '2026-08-14', destacada: false, descripcion: '' },
+  { id: 4, titulo: 'Comprobar vista estrecha', estado: 'pendiente', prioridad: 'baja', creadaEn: '2026-08-16', destacada: false, descripcion: '' },
+  { id: 5, titulo: 'Ejecutar el build', estado: 'pendiente', prioridad: 'media', creadaEn: '2026-08-18', destacada: false, descripcion: '' },
 ];
 
 @Injectable({ providedIn: 'root' })
@@ -38,6 +39,51 @@ export class ActividadesService {
 
   buscarPorId(id: number): Actividad | undefined {
     return this.lista().find((actividad) => actividad.id === id);
+  }
+
+  crear(titulo: string, descripcion: string, prioridad: Prioridad): Actividad | null {
+    const limpio = titulo.trim();
+    if (!this.tituloAceptable(limpio, null)) return null;
+
+    const nueva: Actividad = {
+      id: this.siguienteId(),
+      titulo: limpio,
+      descripcion: descripcion.trim(),
+      estado: 'pendiente',
+      prioridad,
+      creadaEn: new Date().toISOString().slice(0, 10),
+      destacada: false,
+    };
+
+    this.aplicar((actual) => [...actual, nueva]);
+    return nueva;
+  }
+
+  actualizar(id: number, titulo: string, descripcion: string, prioridad: Prioridad): boolean {
+    const limpio = titulo.trim();
+    if (!this.buscarPorId(id) || !this.tituloAceptable(limpio, id)) return false;
+
+    this.aplicar((actual) =>
+      actual.map((actividad) =>
+        actividad.id === id
+          ? { ...actividad, titulo: limpio, descripcion: descripcion.trim(), prioridad }
+          : actividad,
+      ),
+    );
+    return true;
+  }
+
+  private tituloAceptable(limpio: string, salvo: number | null): boolean {
+    if (limpio.length < LIMITES.tituloMin || limpio.length > LIMITES.tituloMax) return false;
+
+    const normal = limpio.toLocaleLowerCase('es');
+    return !this.lista().some(
+      (actividad) => actividad.id !== salvo && actividad.titulo.toLocaleLowerCase('es') === normal,
+    );
+  }
+
+  private siguienteId(): number {
+    return this.lista().reduce((mayor, actividad) => Math.max(mayor, actividad.id), 0) + 1;
   }
 
   alternarDestacada(id: number): void {
